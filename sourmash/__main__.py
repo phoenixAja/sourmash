@@ -13,6 +13,13 @@ from .commands import (categorize, compare, compute, dump, import_csv,
 from .lca import main as lca_main
 from .sig import main as sig_main
 
+try:
+    from sourmash_utils.__main__ import main as utils_main
+    UTILS_AVAILABLE = True
+except ImportError:
+    UTILS_AVAILABLE = False
+
+
 usage='''
 sourmash <command> [<args>]
 
@@ -65,6 +72,9 @@ def main():
                 'multigather': multigather,
                 'sig': sig_main,
                 'signature': sig_main}
+    if UTILS_AVAILABLE:
+        commands['utils'] = utils_main
+
     parser = argparse.ArgumentParser(
         description='work with compressed biological sequence representations')
     parser.add_argument('command', nargs='?')
@@ -80,7 +90,8 @@ def main():
         sys.exit(1)
 
     cmd = commands.get(args.command)
-    cmd(sys.argv[2:])
+    return cmd(sys.argv[2:])
+
 
 if __name__ == '__main__':
     main()
