@@ -107,6 +107,8 @@ uint32_t kmerminhash_ksize(KmerMinHash *ptr);
 
 uint64_t kmerminhash_max_hash(KmerMinHash *ptr);
 
+SourmashStr kmerminhash_md5sum(KmerMinHash *ptr);
+
 void kmerminhash_merge(KmerMinHash *ptr, const KmerMinHash *other);
 
 void kmerminhash_mins_push(KmerMinHash *ptr, uint64_t val);

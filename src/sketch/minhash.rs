@@ -27,6 +27,17 @@ pub enum HashFunctions {
     murmur64_hp = 4,
 }
 
+impl HashFunctions {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::murmur64_DNA => "dna".into(),
+            Self::murmur64_protein => "protein".into(),
+            Self::murmur64_dayhoff => "dayhoff".into(),
+            Self::murmur64_hp => "hp".into(),
+        }
+    }
+}
+
 impl TryFrom<&str> for HashFunctions {
     type Error = Error;
 
@@ -89,21 +100,7 @@ impl Serialize for KmerMinHash {
             partial.serialize_field("abundances", abunds)?;
         }
 
-        partial.serialize_field(
-            "molecule",
-            match &self.is_protein() {
-                true => {
-                    if self.dayhoff() {
-                        "dayhoff"
-                    } else if self.hp() {
-                        "hp"
-                    } else {
-                        "protein"
-                    }
-                }
-                false => "DNA",
-            },
-        )?;
+        partial.serialize_field("molecule", &self.hash_function.to_string())?;
 
         partial.end()
     }
@@ -132,6 +129,7 @@ impl<'de> Deserialize<'de> for KmerMinHash {
         let hash_function = match tmpsig.molecule.to_lowercase().as_ref() {
             "protein" => HashFunctions::murmur64_protein,
             "dayhoff" => HashFunctions::murmur64_dayhoff,
+            "hp" => HashFunctions::murmur64_hp,
             "dna" => HashFunctions::murmur64_DNA,
             _ => unimplemented!(), // TODO: throw error here
         };
