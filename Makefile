@@ -1,12 +1,16 @@
 PYTHON ?= python
 
-all:
-	$(PYTHON) setup.py build_ext -i
+all: build
 
 .PHONY:
 
+build:
+	$(PYTHON) setup.py build_ext -i
+	cargo build
+
 clean:
 	$(PYTHON) setup.py clean --all
+	rm -f sourmash/*.so
 	cd doc && make clean
 
 install: all
@@ -16,6 +20,7 @@ dist: FORCE
 	$(PYTHON) setup.py sdist
 
 test: all
+	cargo test
 	pip install -e '.[test]'
 	$(PYTHON) -m pytest
 
@@ -34,6 +39,7 @@ coverage: all
 
 benchmark:
 	asv continuous master $(git rev-parse HEAD)
+	cargo bench
 
 check:
 	cargo build
