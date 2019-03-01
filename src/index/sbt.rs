@@ -4,26 +4,26 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::io::{BufReader, Read};
 use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use derive_builder::Builder;
 use failure::Error;
 use lazy_init::Lazy;
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 
 use crate::index::nodegraph::Nodegraph;
-use crate::index::storage::{FSStorage, ReadData, Storage, StorageInfo};
-use crate::index::{Comparable, Index, Leaf, LeafInfo};
+use crate::index::storage::{FSStorage, ReadData, ReadDataError, Storage, StorageInfo};
+use crate::index::{Comparable, Dataset, DatasetInfo, Index};
 use crate::Signature;
 
-pub type MHBT = SBT<Node<Nodegraph>, Leaf<Signature>>;
+pub type MHBT = SBT<Node<Nodegraph>, Dataset<Signature>>;
 
 #[derive(Builder)]
 pub struct SBT<N, L> {
     #[builder(default = "2")]
     d: u32,
 
-    storage: Rc<dyn Storage>,
+    storage: Arc<dyn Storage>,
 
     #[builder(setter(skip))]
     factory: Factory,
@@ -31,6 +31,14 @@ pub struct SBT<N, L> {
     nodes: HashMap<u64, N>,
 
     leaves: HashMap<u64, L>,
+}
+
+const fn parent(pos: u64, d: u64) -> u64 {
+    ((pos - 1) / d) as u64
+}
+
+const fn child(parent: u64, pos: u64, d: u64) -> u64 {
+    d * parent + pos + 1
 }
 
 impl<N, L> SBT<N, L>
@@ -42,13 +50,13 @@ where
         if pos == 0 {
             None
         } else {
-            Some((pos - 1) / (u64::from(self.d)))
+            Some(parent(pos, self.d as u64))
         }
     }
 
     #[inline(always)]
     fn child(&self, parent: u64, pos: u64) -> u64 {
-        u64::from(self.d) * parent + pos + 1
+        child(parent, pos, self.d as u64)
     }
 
     #[inline(always)]
@@ -60,24 +68,26 @@ where
         self.leaves.values().cloned().collect()
     }
 
-    pub fn storage(&self) -> Rc<dyn Storage> {
-        Rc::clone(&self.storage)
+    pub fn storage(&self) -> Arc<dyn Storage> {
+        Arc::clone(&self.storage)
     }
 
     // combine
 }
 
-impl<T, U> SBT<Node<U>, Leaf<T>>
+impl<T, U> SBT<Node<U>, Dataset<T>>
 where
-    T: std::marker::Sync,
-    U: std::marker::Sync,
+    T: std::marker::Sync + Send,
+    U: std::marker::Sync + Send,
 {
-    pub fn from_reader<R, P>(rdr: &mut R, path: P) -> Result<SBT<Node<U>, Leaf<T>>, Error>
+    pub fn from_reader<R, P>(rdr: &mut R, path: P) -> Result<SBT<Node<U>, Dataset<T>>, Error>
     where
         R: Read,
         P: AsRef<Path>,
     {
-        let sbt: SBTInfo<NodeInfo, LeafInfo> = serde_json::from_reader(rdr)?;
+        // TODO: check https://serde.rs/enum-representations.html for a
+        // solution for loading v4 and v5
+        let sbt: SBTInfo<NodeInfo, DatasetInfo> = serde_json::from_reader(rdr)?;
 
         // TODO: match with available Storage while we don't
         // add a function to build a Storage from a StorageInfo
@@ -85,12 +95,12 @@ where
         basepath.push(path);
         basepath.push(&sbt.storage.args["path"]);
 
-        let storage: Rc<dyn Storage> = Rc::new(FSStorage { basepath });
+        let storage: Arc<dyn Storage> = Arc::new(FSStorage { basepath });
 
         Ok(SBT {
             d: sbt.d,
             factory: sbt.factory,
-            storage: Rc::clone(&storage),
+            storage: Arc::clone(&storage),
             nodes: sbt
                 .nodes
                 .into_iter()
@@ -99,8 +109,8 @@ where
                         filename: l.filename,
                         name: l.name,
                         metadata: l.metadata,
-                        storage: Some(Rc::clone(&storage)),
-                        data: Rc::new(Lazy::new()),
+                        storage: Some(Arc::clone(&storage)),
+                        data: Arc::new(Lazy::new()),
                     };
                     (n, new_node)
                 })
@@ -109,12 +119,12 @@ where
                 .leaves
                 .into_iter()
                 .map(|(n, l)| {
-                    let new_node = Leaf {
+                    let new_node = Dataset {
                         filename: l.filename,
                         name: l.name,
                         metadata: l.metadata,
-                        storage: Some(Rc::clone(&storage)),
-                        data: Rc::new(Lazy::new()),
+                        storage: Some(Arc::clone(&storage)),
+                        data: Arc::new(Lazy::new()),
                     };
                     (n, new_node)
                 })
@@ -122,7 +132,7 @@ where
         })
     }
 
-    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<SBT<Node<U>, Leaf<T>>, Error> {
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<SBT<Node<U>, Dataset<T>>, Error> {
         let file = File::open(&path)?;
         let mut reader = BufReader::new(file);
 
@@ -132,15 +142,59 @@ where
         basepath.push(path);
         basepath.canonicalize()?;
 
-        let sbt = SBT::<Node<U>, Leaf<T>>::from_reader(&mut reader, &basepath.parent().unwrap())?;
+        let sbt =
+            SBT::<Node<U>, Dataset<T>>::from_reader(&mut reader, &basepath.parent().unwrap())?;
         Ok(sbt)
+    }
+
+    pub fn save_file<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let mut args: HashMap<String, String> = HashMap::default();
+        args.insert("path".into(), ".".into());
+        let storage = StorageInfo {
+            backend: "FSStorage".into(),
+            args: args,
+        };
+        let info: SBTInfo<NodeInfo, DatasetInfo> = SBTInfo {
+            d: self.d,
+            factory: self.factory.clone(),
+            storage: storage,
+            version: 5,
+            nodes: self
+                .nodes
+                .iter()
+                .map(|(n, l)| {
+                    let new_node = NodeInfo {
+                        filename: l.filename.clone(),
+                        name: l.name.clone(),
+                        metadata: l.metadata.clone(),
+                    };
+                    (*n, new_node)
+                })
+                .collect(),
+            leaves: self
+                .leaves
+                .iter()
+                .map(|(n, l)| {
+                    let new_node = DatasetInfo {
+                        filename: l.filename.clone(),
+                        name: l.name.clone(),
+                        metadata: l.metadata.clone(),
+                    };
+                    (*n, new_node)
+                })
+                .collect(),
+        };
+        let file = File::create(path)?;
+        serde_json::to_writer(file, &info)?;
+
+        Ok(())
     }
 }
 
 impl<N, L> Index for SBT<N, L>
 where
     N: Comparable<N> + Comparable<L>,
-    L: Comparable<L> + std::clone::Clone,
+    L: Comparable<L> + std::clone::Clone + std::fmt::Debug,
 {
     type Item = L;
 
@@ -174,7 +228,7 @@ where
         Ok(matches)
     }
 
-    fn insert(&mut self, node: &L) {}
+    fn insert(&mut self, dataset: &L) {}
 
     fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         Ok(())
@@ -183,9 +237,13 @@ where
     fn load<P: AsRef<Path>>(path: P) -> Result<(), Error> {
         Ok(())
     }
+
+    fn datasets(&self) -> Vec<Self::Item> {
+        self.leaves.values().cloned().collect()
+    }
 }
 
-#[derive(Builder, Clone, Default, Deserialize)]
+#[derive(Builder, Clone, Default, Serialize, Deserialize)]
 pub struct Factory {
     class: String,
     args: Vec<u64>,
@@ -199,100 +257,82 @@ where
     filename: String,
     name: String,
     metadata: HashMap<String, u64>,
-    storage: Option<Rc<dyn Storage>>,
+    storage: Option<Arc<dyn Storage>>,
     #[builder(setter(skip))]
-    pub(crate) data: Rc<Lazy<T>>,
+    pub(crate) data: Arc<Lazy<T>>,
 }
 
 impl Comparable<Node<Nodegraph>> for Node<Nodegraph> {
     fn similarity(&self, other: &Node<Nodegraph>) -> f64 {
-        if let Some(storage) = &self.storage {
-            let ng: &Nodegraph = self.data(&**storage).unwrap();
-            let ong: &Nodegraph = other.data(&**storage).unwrap();
-            ng.similarity(&ong)
-        } else {
-            // TODO: in this case storage is not set up,
-            // so we should throw an error?
-            0.0
-        }
+        let ng: &Nodegraph = self.data().unwrap();
+        let ong: &Nodegraph = other.data().unwrap();
+        ng.similarity(&ong)
     }
 
     fn containment(&self, other: &Node<Nodegraph>) -> f64 {
+        let ng: &Nodegraph = self.data().unwrap();
+        let ong: &Nodegraph = other.data().unwrap();
+        ng.containment(&ong)
+    }
+}
+
+impl Comparable<Dataset<Signature>> for Node<Nodegraph> {
+    fn similarity(&self, other: &Dataset<Signature>) -> f64 {
+        let ng: &Nodegraph = self.data().unwrap();
+        let oth: &Signature = other.data().unwrap();
+
+        // TODO: select the right signatures...
+        let sig = &oth.signatures[0];
+        if sig.size() == 0 {
+            return 0.0;
+        }
+
+        let matches: usize = sig.mins.iter().map(|h| ng.get(*h)).sum();
+
+        let min_n_below = self.metadata["min_n_below"] as f64;
+
+        // This overestimates the similarity, but better than truncating too
+        // soon and losing matches
+        matches as f64 / min_n_below
+    }
+
+    fn containment(&self, other: &Dataset<Signature>) -> f64 {
+        let ng: &Nodegraph = self.data().unwrap();
+        let oth: &Signature = other.data().unwrap();
+
+        // TODO: select the right signatures...
+        let sig = &oth.signatures[0];
+        if sig.size() == 0 {
+            return 0.0;
+        }
+
+        let matches: usize = sig.mins.iter().map(|h| ng.get(*h)).sum();
+
+        matches as f64 / sig.size() as f64
+    }
+}
+
+impl ReadData<Nodegraph> for Node<Nodegraph> {
+    fn data(&self) -> Result<&Nodegraph, Error> {
         if let Some(storage) = &self.storage {
-            let ng: &Nodegraph = self.data(&**storage).unwrap();
-            let ong: &Nodegraph = other.data(&**storage).unwrap();
-            ng.containment(&ong)
+            Ok(self.data.get_or_create(|| {
+                let raw = storage.load(&self.filename).unwrap();
+                Nodegraph::from_reader(&mut &raw[..]).unwrap()
+            }))
         } else {
-            // TODO: in this case storage is not set up,
-            // so we should throw an error?
-            0.0
+            Err(ReadDataError::LoadError.into())
         }
     }
 }
 
-impl Comparable<Leaf<Signature>> for Node<Nodegraph> {
-    fn similarity(&self, other: &Leaf<Signature>) -> f64 {
-        if let Some(storage) = &self.storage {
-            let ng: &Nodegraph = self.data(&**storage).unwrap();
-            let oth: &Signature = other.data(&**storage).unwrap();
-
-            // TODO: select the right signatures...
-            let sig = &oth.signatures[0];
-            if sig.size() == 0 {
-                return 0.0;
-            }
-
-            let matches: usize = sig.mins.iter().map(|h| ng.get(*h)).sum();
-
-            let min_n_below = self.metadata["min_n_below"] as f64;
-
-            // This overestimates the similarity, but better than truncating too
-            // soon and losing matches
-            matches as f64 / min_n_below
-        } else {
-            // TODO: throw error, storage not initialized
-            0.0
-        }
-    }
-
-    fn containment(&self, other: &Leaf<Signature>) -> f64 {
-        if let Some(storage) = &self.storage {
-            let ng: &Nodegraph = self.data(&**storage).unwrap();
-            let oth: &Signature = other.data(&**storage).unwrap();
-
-            // TODO: select the right signatures...
-            let sig = &oth.signatures[0];
-            if sig.size() == 0 {
-                return 0.0;
-            }
-
-            let matches: usize = sig.mins.iter().map(|h| ng.get(*h)).sum();
-
-            matches as f64 / sig.size() as f64
-        } else {
-            // TODO: throw error, storage not initialized
-            0.0
-        }
-    }
-}
-
-impl<S: Storage + ?Sized> ReadData<Nodegraph, S> for Node<Nodegraph> {
-    fn data(&self, storage: &S) -> Result<&Nodegraph, Error> {
-        Ok(self.data.get_or_create(|| {
-            let raw = storage.load(&self.filename).unwrap();
-            Nodegraph::from_reader(&mut &raw[..]).unwrap()
-        }))
-    }
-}
-
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct NodeInfo {
     filename: String,
     name: String,
     metadata: HashMap<String, u64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct SBTInfo<N, L> {
     d: u32,
     version: u32,
@@ -332,7 +372,7 @@ type HashIntersection = HashSet<u64, BuildHasherDefault<NoHashHasher>>;
 enum BinaryTree {
     Empty,
     Internal(Box<TreeNode<HashIntersection>>),
-    Leaf(Box<TreeNode<Leaf<Signature>>>),
+    Dataset(Box<TreeNode<Dataset<Signature>>>),
 }
 
 struct TreeNode<T> {
@@ -341,11 +381,11 @@ struct TreeNode<T> {
     right: BinaryTree,
 }
 
-pub fn scaffold<N>(mut datasets: Vec<Leaf<Signature>>) -> SBT<Node<N>, Leaf<Signature>>
+pub fn scaffold<N>(mut datasets: Vec<Dataset<Signature>>) -> SBT<Node<N>, Dataset<Signature>>
 where
     N: std::marker::Sync + std::clone::Clone + std::default::Default,
 {
-    let mut leaves: HashMap<u64, Leaf<Signature>> = HashMap::with_capacity(datasets.len());
+    let mut leaves: HashMap<u64, Dataset<Signature>> = HashMap::with_capacity(datasets.len());
 
     let mut next_round = Vec::new();
 
@@ -381,7 +421,7 @@ where
                 .cloned()
                 .collect();
 
-            let simleaf_tree = BinaryTree::Leaf(Box::new(TreeNode {
+            let simleaf_tree = BinaryTree::Dataset(Box::new(TreeNode {
                 element: similar_leaf,
                 left: BinaryTree::Empty,
                 right: BinaryTree::Empty,
@@ -389,7 +429,7 @@ where
             (simleaf_tree, in_common)
         };
 
-        let leaf_tree = BinaryTree::Leaf(Box::new(TreeNode {
+        let leaf_tree = BinaryTree::Dataset(Box::new(TreeNode {
             element: next_leaf,
             left: BinaryTree::Empty,
             right: BinaryTree::Empty,
@@ -426,7 +466,7 @@ where
             visited.insert(pos);
 
             match cnode {
-                BinaryTree::Leaf(leaf) => {
+                BinaryTree::Dataset(leaf) => {
                     leaves.insert(pos, leaf.element);
                 }
                 BinaryTree::Internal(mut node) => {
@@ -442,7 +482,7 @@ where
 
     // save the new tree
 
-    let storage: Rc<dyn Storage> = Rc::new(FSStorage {
+    let storage: Arc<dyn Storage> = Arc::new(FSStorage {
         basepath: ".sbt".into(),
     });
 
@@ -494,7 +534,7 @@ impl BinaryTree {
                 BinaryTree::Empty => {
                     std::mem::replace(&mut el1.element, HashIntersection::default())
                 }
-                _ => panic!("Should not see a Leaf at this level"),
+                _ => panic!("Should not see a Dataset at this level"),
             }
         } else {
             HashIntersection::default()
@@ -519,9 +559,27 @@ impl BinaryTree {
 
 #[cfg(test)]
 mod test {
+    use std::io::{Seek, SeekFrom};
+    use tempfile;
+
     use super::*;
     use crate::index::linear::{LinearIndex, LinearIndexBuilder};
     use crate::index::search::{search_minhashes, search_minhashes_containment};
+
+    #[test]
+    fn save_sbt() {
+        let mut filename = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        filename.push("tests/test-data/v5.sbt.json");
+
+        let sbt = MHBT::from_path(filename).expect("Loading error");
+
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        sbt.save_file(tmpfile.path()).unwrap();
+
+        tmpfile.seek(SeekFrom::Start(0)).unwrap();
+
+        let mut sbt = MHBT::from_path(tmpfile.path()).expect("Loading error");
+    }
 
     #[test]
     fn load_sbt() {
@@ -538,7 +596,11 @@ mod test {
 
         println!("sbt leaves {:?} {:?}", sbt.leaves.len(), sbt.leaves);
 
-        let leaf = &sbt.leaves[&7];
+        let mut filename = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        filename.push("tests/test-data/.sbt.v3/0107d767a345eff67ecdaed2ee5cd7ba");
+
+        let sig = Signature::from_path(filename).expect("Loading error");
+        let leaf: Dataset<Signature> = sig[0].clone().into();
 
         let results = sbt.find(search_minhashes, &leaf, 0.5).unwrap();
         assert_eq!(results.len(), 1);
@@ -546,22 +608,22 @@ mod test {
         println!("leaf: {:?}", leaf);
 
         let results = sbt.find(search_minhashes, &leaf, 0.1).unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         println!("results: {:?}", results);
         println!("leaf: {:?}", leaf);
 
         let mut linear = LinearIndexBuilder::default()
-            .storage(Rc::clone(&sbt.storage) as Rc<dyn Storage>)
+            .storage(Arc::clone(&sbt.storage) as Arc<dyn Storage>)
             .build()
             .unwrap();
-        for l in &sbt.leaves {
-            linear.insert(l.1);
+        for (_, l) in &sbt.leaves {
+            linear.insert(l);
         }
 
         println!(
             "linear leaves {:?} {:?}",
-            linear.leaves.len(),
-            linear.leaves
+            linear.datasets.len(),
+            linear.datasets
         );
 
         let results = linear.find(search_minhashes, &leaf, 0.5).unwrap();
@@ -570,21 +632,21 @@ mod test {
         println!("leaf: {:?}", leaf);
 
         let results = linear.find(search_minhashes, &leaf, 0.1).unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         println!("results: {:?}", results);
         println!("leaf: {:?}", leaf);
 
         let results = linear
             .find(search_minhashes_containment, &leaf, 0.5)
             .unwrap();
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         println!("results: {:?}", results);
         println!("leaf: {:?}", leaf);
 
         let results = linear
             .find(search_minhashes_containment, &leaf, 0.1)
             .unwrap();
-        assert_eq!(results.len(), 4);
+        assert_eq!(results.len(), 3);
         println!("results: {:?}", results);
         println!("leaf: {:?}", leaf);
     }
@@ -596,7 +658,8 @@ mod test {
 
         let sbt = MHBT::from_path(filename).expect("Loading error");
 
-        let new_sbt: MHBT = scaffold(sbt.leaves());
-        assert_eq!(new_sbt.leaves().len(), 7);
+        let new_sbt: MHBT = scaffold(sbt.datasets());
+
+        assert_eq!(new_sbt.datasets().len(), 7);
     }
 }

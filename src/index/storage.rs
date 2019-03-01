@@ -4,22 +4,28 @@ use std::io::{BufReader, Read};
 use std::path::PathBuf;
 
 use derive_builder::Builder;
-use failure::Error;
-use serde_derive::Deserialize;
+use failure::{Error, Fail};
+use serde_derive::{Deserialize, Serialize};
 
-/// Implemented by anything that wants to read specific data from a storage.
-pub trait ReadData<D, S: Storage + ?Sized> {
-    fn data(&self, storage: &S) -> Result<&D, Error>;
+#[derive(Debug, Fail)]
+pub enum ReadDataError {
+    #[fail(display = "Could not load data")]
+    LoadError,
 }
 
-#[derive(Deserialize)]
+/// Implemented by anything that wants to read specific data from a storage.
+pub trait ReadData<D> {
+    fn data(&self) -> Result<&D, Error>;
+}
+
+#[derive(Serialize, Deserialize)]
 pub(crate) struct StorageInfo {
-    backend: String,
+    pub(crate) backend: String,
     pub(crate) args: HashMap<String, String>,
 }
 
 /// An abstraction for any place where we can store data.
-pub trait Storage {
+pub trait Storage: Send + Sync {
     /// Save bytes into path
     fn save(&mut self, path: &str, content: &[u8]) -> Result<(), Error>;
 
