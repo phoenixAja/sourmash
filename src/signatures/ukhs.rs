@@ -127,6 +127,8 @@ pub trait UKHSTrait: SigsTrait {
         let ukhs = serde_json::from_reader(rdr)?;
         Ok(ukhs)
     }
+
+    fn cardinality(&self) -> u64;
 }
 
 impl<T> ToWriter for UKHS<T>
@@ -224,6 +226,10 @@ impl UKHSTrait for UKHS<u64> {
             Err(_) => Err(SourmashError::SerdeError.into()),
         }
     }
+
+    fn cardinality(&self) -> u64 {
+        self.buckets.iter().sum()
+    }
 }
 
 impl SigsTrait for UKHS<u64> {
@@ -302,6 +308,10 @@ impl UKHSTrait for UKHS<Nodegraph> {
             Ok(_) => Ok(()),
             Err(_) => Err(SourmashError::SerdeError.into()),
         }
+    }
+
+    fn cardinality(&self) -> u64 {
+        self.buckets.iter().map(|b| b.unique_kmers() as u64).sum()
     }
 }
 
@@ -404,6 +414,10 @@ impl UKHSTrait for UKHS<HLL> {
             Ok(_) => Ok(()),
             Err(_) => Err(SourmashError::SerdeError.into()),
         }
+    }
+
+    fn cardinality(&self) -> u64 {
+        self.buckets.iter().map(|b| b.count() as u64).sum()
     }
 }
 

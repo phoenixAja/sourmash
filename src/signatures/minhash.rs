@@ -2,6 +2,7 @@ use serde::de::{Deserialize, Deserializer};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_derive::Deserialize;
 
+use std::cmp;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::iter::{Iterator, Peekable};
@@ -434,6 +435,41 @@ impl KmerMinHash {
         } else {
             return Ok(0.0);
         }
+    }
+
+    pub fn cardinality(&self) -> u64 {
+        let m: usize = 1024; // TODO: number of registers;
+        let b = (m as f64).log2().ceil() as u32;
+
+        let mut registers = vec![0u8; m];
+
+        for h in &self.mins {
+            let w = h >> b;
+            let j = h - (w << b);
+
+            let p = w.leading_zeros() + 1 - b;
+
+            let m_old = registers[j as usize];
+            registers[j as usize] = cmp::max(m_old, p as u8);
+        }
+
+        let am = match m {
+            0..=32 => 0.673,
+            32..=63 => 0.697,
+            64..=127 => 0.709,
+            _ => 0.7213 / (1. + 1.079 / (m as f64)),
+        };
+
+        let z = 1f64
+            / registers
+                .iter()
+                .map(|&x| 2f64.powi(-(i32::from(x))))
+                .sum::<f64>();
+
+        let m = m as f64;
+        let e = am * m * m * z;
+
+        e as u64
     }
 }
 
