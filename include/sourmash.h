@@ -8,6 +8,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+enum HashFunctions {
+  HASH_FUNCTIONS_MURMUR64_DNA = 1,
+  HASH_FUNCTIONS_MURMUR64_PROTEIN = 2,
+  HASH_FUNCTIONS_MURMUR64_DAYHOFF = 3,
+};
+typedef uint32_t HashFunctions;
+
 enum SourmashErrorCode {
   SOURMASH_ERROR_CODE_NO_ERROR = 0,
   SOURMASH_ERROR_CODE_PANIC = 1,
@@ -78,6 +85,10 @@ uint64_t kmerminhash_get_min_idx(KmerMinHash *ptr, uint64_t idx);
 const uint64_t *kmerminhash_get_mins(KmerMinHash *ptr);
 
 uintptr_t kmerminhash_get_mins_size(KmerMinHash *ptr);
+
+HashFunctions kmerminhash_hash_function(KmerMinHash *ptr);
+
+void kmerminhash_hash_function_set(KmerMinHash *ptr, HashFunctions hash_function);
 
 uint64_t kmerminhash_intersection(KmerMinHash *ptr, const KmerMinHash *other);
 

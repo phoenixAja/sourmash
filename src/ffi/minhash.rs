@@ -6,7 +6,7 @@ use std::slice;
 
 use crate::errors::SourmashError;
 use crate::signature::SigsTrait;
-use crate::sketch::minhash::{aa_to_dayhoff, translate_codon, KmerMinHash};
+use crate::sketch::minhash::{aa_to_dayhoff, translate_codon, HashFunctions, KmerMinHash};
 
 #[no_mangle]
 pub unsafe extern "C" fn kmerminhash_new(
@@ -271,7 +271,7 @@ unsafe fn kmerminhash_enable_abundance(ptr: *mut KmerMinHash) -> Result<()> {
     };
 
     if mh.mins.len() != 0 {
-      return Err(SourmashError::NonEmptyMinHash.into());
+      return Err(SourmashError::NonEmptyMinHash {message: "track_abundance=True".into()} .into());
     }
 
     mh.abunds = Some(vec![]);
@@ -304,6 +304,31 @@ pub unsafe extern "C" fn kmerminhash_max_hash(ptr: *mut KmerMinHash) -> u64 {
         &mut *ptr
     };
     mh.max_hash()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn kmerminhash_hash_function(ptr: *mut KmerMinHash) -> HashFunctions {
+    let mh = {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+    mh.hash_function()
+}
+
+ffi_fn! {
+unsafe fn kmerminhash_hash_function_set(ptr: *mut KmerMinHash, hash_function: HashFunctions) -> Result<()> {
+    let mh = {
+        assert!(!ptr.is_null());
+        &mut *ptr
+    };
+
+    if mh.mins.len() != 0 {
+      return Err(SourmashError::NonEmptyMinHash { message: "hash_function".into()}.into());
+    }
+
+    mh.hash_function = hash_function;
+    Ok(())
+}
 }
 
 ffi_fn! {

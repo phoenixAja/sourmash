@@ -21,8 +21,8 @@ pub enum SourmashError {
     #[fail(display = "different signatures cannot be compared")]
     MismatchSignatureType,
 
-    #[fail(display = "Can only set track_abundance=True if the MinHash is empty")]
-    NonEmptyMinHash,
+    #[fail(display = "Can only set {} if the MinHash is empty", message)]
+    NonEmptyMinHash { message: String },
 
     #[fail(display = "invalid DNA character in input k-mer: {}", message)]
     InvalidDNA { message: String },
@@ -82,7 +82,7 @@ impl SourmashErrorCode {
                     SourmashError::MismatchSignatureType => {
                         SourmashErrorCode::MismatchSignatureType
                     }
-                    SourmashError::NonEmptyMinHash => SourmashErrorCode::NonEmptyMinHash,
+                    SourmashError::NonEmptyMinHash { .. } => SourmashErrorCode::NonEmptyMinHash,
                     SourmashError::InvalidDNA { .. } => SourmashErrorCode::InvalidDNA,
                     SourmashError::InvalidProt { .. } => SourmashErrorCode::InvalidProt,
                     SourmashError::InvalidCodonLength { .. } => {

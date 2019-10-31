@@ -17,13 +17,21 @@ use crate::signature::SigsTrait;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u32)]
+pub enum HashFunctions {
+    murmur64_DNA = 1,
+    murmur64_protein = 2,
+    murmur64_dayhoff = 3,
+}
+
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct KmerMinHash {
     num: u32,
     ksize: u32,
-    is_protein: bool,
-    dayhoff: bool,
+    pub(crate) hash_function: HashFunctions,
     seed: u64,
     max_hash: u64,
     pub(crate) mins: Vec<u64>,
@@ -35,8 +43,7 @@ impl Default for KmerMinHash {
         KmerMinHash {
             num: 1000,
             ksize: 21,
-            is_protein: false,
-            dayhoff: false,
+            hash_function: HashFunctions::murmur64_DNA,
             seed: 42,
             max_hash: 0,
             mins: Vec::with_capacity(1000),
@@ -69,9 +76,9 @@ impl Serialize for KmerMinHash {
 
         partial.serialize_field(
             "molecule",
-            match &self.is_protein {
+            match &self.is_protein() {
                 true => {
-                    if self.dayhoff {
+                    if self.dayhoff() {
                         "dayhoff"
                     } else {
                         "protein"
@@ -105,7 +112,12 @@ impl<'de> Deserialize<'de> for KmerMinHash {
         let tmpsig = TempSig::deserialize(deserializer)?;
 
         let num = if tmpsig.max_hash != 0 { 0 } else { tmpsig.num };
-        let molecule = tmpsig.molecule.to_lowercase();
+        let hash_function = match tmpsig.molecule.to_lowercase().as_ref() {
+            "protein" => HashFunctions::murmur64_protein,
+            "dayhoff" => HashFunctions::murmur64_dayhoff,
+            "dna" => HashFunctions::murmur64_DNA,
+            _ => unimplemented!(), // TODO: throw error here
+        };
 
         Ok(KmerMinHash {
             num,
@@ -114,13 +126,7 @@ impl<'de> Deserialize<'de> for KmerMinHash {
             max_hash: tmpsig.max_hash,
             mins: tmpsig.mins,
             abunds: tmpsig.abundances,
-            is_protein: match molecule.as_ref() {
-                "protein" => true,
-                "dayhoff" => true,
-                "dna" => false,
-                _ => unimplemented!(),
-            },
-            dayhoff: molecule == "dayhoff",
+            hash_function,
         })
     }
 }
@@ -150,11 +156,18 @@ impl KmerMinHash {
             abunds = None
         }
 
+        let hash_function = if is_protein && dayhoff {
+            HashFunctions::murmur64_dayhoff
+        } else if is_protein {
+            HashFunctions::murmur64_protein
+        } else {
+            HashFunctions::murmur64_DNA
+        };
+
         KmerMinHash {
             num,
             ksize,
-            is_protein,
-            dayhoff,
+            hash_function,
             seed,
             max_hash,
             mins,
@@ -167,7 +180,11 @@ impl KmerMinHash {
     }
 
     pub fn is_protein(&self) -> bool {
-        self.is_protein
+        match self.hash_function {
+            HashFunctions::murmur64_dayhoff => true,
+            HashFunctions::murmur64_protein => true,
+            HashFunctions::murmur64_DNA => false,
+        }
     }
 
     pub fn seed(&self) -> u64 {
@@ -407,8 +424,8 @@ impl KmerMinHash {
         let mut combined_mh = KmerMinHash::new(
             self.num,
             self.ksize,
-            self.is_protein,
-            self.dayhoff,
+            self.is_protein(),
+            self.dayhoff(),
             self.seed,
             self.max_hash,
             self.abunds.is_some(),
@@ -440,8 +457,8 @@ impl KmerMinHash {
         let mut combined_mh = KmerMinHash::new(
             self.num,
             self.ksize,
-            self.is_protein,
-            self.dayhoff,
+            self.is_protein(),
+            self.dayhoff(),
             self.seed,
             self.max_hash,
             self.abunds.is_some(),
@@ -476,7 +493,14 @@ impl KmerMinHash {
     }
 
     pub fn dayhoff(&self) -> bool {
-        self.dayhoff
+        match self.hash_function {
+            HashFunctions::murmur64_dayhoff => true,
+            _ => false,
+        }
+    }
+
+    pub fn hash_function(&self) -> HashFunctions {
+        self.hash_function
     }
 }
 
@@ -497,10 +521,8 @@ impl SigsTrait for KmerMinHash {
         if self.ksize != other.ksize {
             return Err(SourmashError::MismatchKSizes.into());
         }
-        if self.is_protein != other.is_protein {
-            return Err(SourmashError::MismatchDNAProt.into());
-        }
-        if self.dayhoff != other.dayhoff {
+        if self.hash_function != other.hash_function {
+            // TODO: fix this error
             return Err(SourmashError::MismatchDNAProt.into());
         }
         if self.max_hash != other.max_hash {
@@ -518,7 +540,7 @@ impl SigsTrait for KmerMinHash {
             .map(|&x| (x as char).to_ascii_uppercase() as u8)
             .collect();
         if sequence.len() >= (self.ksize as usize) {
-            if !self.is_protein {
+            if !self.is_protein() {
                 // dna
                 for kmer in sequence.windows(self.ksize as usize) {
                     if _checkdna(kmer) {
@@ -547,7 +569,7 @@ impl SigsTrait for KmerMinHash {
                         .skip(i)
                         .take(sequence.len() - i)
                         .collect();
-                    let aa = to_aa(&substr, self.dayhoff)?;
+                    let aa = to_aa(&substr, self.dayhoff())?;
 
                     aa.windows(aa_ksize as usize)
                         .map(|n| self.add_word(n))
@@ -555,7 +577,7 @@ impl SigsTrait for KmerMinHash {
 
                     let rc_substr: Vec<u8> =
                         rc.iter().cloned().skip(i).take(rc.len() - i).collect();
-                    let aa_rc = to_aa(&rc_substr, self.dayhoff)?;
+                    let aa_rc = to_aa(&rc_substr, self.dayhoff())?;
 
                     aa_rc
                         .windows(aa_ksize as usize)

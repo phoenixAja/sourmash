@@ -6,6 +6,7 @@ import copy
 
 from ._compat import string_types, range_type
 from ._lowlevel import ffi, lib
+from .hash_functions import HashFunctions
 from .utils import RustObject, rustcall, decode_str
 from .exceptions import SourmashError
 
@@ -98,6 +99,16 @@ class MinHash(RustObject):
         mins=None,
         scaled=0,
     ):
+        _hash_function = None
+        if is_protein and dayhoff:
+            _hash_function = HashFunctions.murmur64_dayhoff
+        elif is_protein:
+            _hash_function = HashFunctions.murmur64_protein
+        elif not is_protein and not dayhoff:
+            _hash_function = HashFunctions.murmur64_DNA
+        else:
+            raise ValueError('invalid hash_function')
+
         if max_hash and scaled:
             raise ValueError("cannot set both max_hash and scaled")
         elif scaled:
@@ -278,6 +289,22 @@ class MinHash(RustObject):
             raise RuntimeError("Can only set track_abundance=True if the MinHash is empty")
         else:
             self._methodcall(lib.kmerminhash_enable_abundance)
+
+    @property
+    def hash_function(self):
+        enum_value = self._methodcall(lib.kmerminhash_hash_function)
+        return HashFunctions(enum_value)
+
+    @hash_function.setter
+    def hash_function(self, v):
+        # TODO: validate v
+        # TODO: allow passing a string too?
+        # TODO: same sort of validation as track_abundance:
+        #    - can only change on an empty minhash
+        if self.hash_function == v:
+            return
+
+        self._methodcall(lib.kmerminhash_hash_function_set, v.value)
 
     def add_hash(self, h):
         return self._methodcall(lib.kmerminhash_add_hash, h)
@@ -486,13 +513,22 @@ class MinHash(RustObject):
                 )
 
     def is_molecule_type(self, molecule):
-        if molecule.upper() == "DNA" and not self.is_protein:
-            return True
+        # TODO: only accept molecule as enum
+        if isinstance(molecule, str):
+            if molecule.upper() == "DNA":
+                molecule = HashFunctions.murmur64_DNA
+            elif molecule == "protein":
+                molecule = HashFunctions.murmur64_protein
+            elif molecule == "dayhoff":
+                molecule = HashFunctions.murmur64_dayhoff
+
+        if molecule == HashFunctions.murmur64_DNA and not self.is_protein:
+             return True
         if self.is_protein:
             if self.dayhoff:
-                if molecule == 'dayhoff':
+               if molecule == HashFunctions.murmur64_dayhoff:
                     return True
             else:
-                if molecule == "protein":
+               if molecule == HashFunctions.murmur64_protein:
                     return True
         return False

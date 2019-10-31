@@ -42,6 +42,7 @@ import pickle
 import pytest
 
 import sourmash
+from sourmash.hash_functions import HashFunctions
 from sourmash._minhash import (
     MinHash,
     hash_murmur,
@@ -949,6 +950,43 @@ def test_set_abundance_initialized():
         a.track_abundance = True
 
     assert "Can only set track_abundance=True if the MinHash is empty" in e.value.args[0]
+
+
+def test_set_hashfunction():
+    a = MinHash(10, 6, is_protein=False, track_abundance=False)
+
+    with pytest.raises(ValueError) as e:
+        a.add_protein('AGYYG')
+    assert "cannot add amino acid sequence to DNA MinHash"
+
+    a.hash_function = HashFunctions.murmur64_protein
+
+    a.add_protein('AGYYG')
+
+    mins = a.get_mins()
+    assert len(mins) == 4
+
+
+def test_set_hashfunction_initialized_same():
+    a = MinHash(1, 4, track_abundance=False)
+    a.add_sequence('ATGC')
+
+    # if it's the same hash_function, it doesn't do anything (and shouldn't fail)
+    a.hash_function = HashFunctions.murmur64_DNA
+
+    a.add_sequence('ATGC')
+    mins = a.get_mins()
+    assert len(mins) == 1
+
+
+def test_set_hashfunction_initialized():
+    a = MinHash(1, 4, track_abundance=False)
+    a.add_sequence('ATGC')
+
+    with pytest.raises(ValueError) as e:
+        a.hash_function = HashFunctions.murmur64_protein
+
+    assert "Can only set hash_function if the MinHash is empty" in e.value.args[0]
 
 
 def test_reviving_minhash():
