@@ -984,6 +984,9 @@ class Node(object):
     def data(self, new_data):
         self._data = new_data
 
+    def unload(self):
+        self._data = None
+
     @staticmethod
     def load(info, storage=None):
         new_node = Node(info['factory'],

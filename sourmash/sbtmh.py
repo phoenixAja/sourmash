@@ -107,7 +107,7 @@ def _max_jaccard_underneath_internal_node(node, hashes):
     return max_score
 
 
-def search_minhashes(node, sig, threshold, results=None, downsample=True):
+def search_minhashes(node, sig, threshold, results=None, downsample=True, unload_data=False):
     """\
     Default tree search function, searching for best Jaccard similarity.
     """
@@ -132,6 +132,9 @@ def search_minhashes(node, sig, threshold, results=None, downsample=True):
     if results is not None:
         results[node.name] = score
 
+    if unload_data:
+        node.unload()
+
     if score >= threshold:
         return 1
 
@@ -143,7 +146,7 @@ class SearchMinHashesFindBest(object):
         self.best_match = 0.
         self.downsample = downsample
 
-    def search(self, node, sig, threshold, results=None):
+    def search(self, node, sig, threshold, results=None, unload_data=False):
         mins = sig.minhash.get_mins()
         score = 0
 
@@ -164,6 +167,9 @@ class SearchMinHashesFindBest(object):
         if results is not None:
             results[node.name] = score
 
+        if unload_data:
+            node.unload()
+
         if score >= threshold:
             # have we done better than this elsewhere? if yes, truncate.
             if score > self.best_match:
@@ -176,7 +182,7 @@ class SearchMinHashesFindBest(object):
 
 
 def search_minhashes_containment(node, sig, threshold,
-                                 results=None, downsample=True):
+                                 results=None, downsample=True, unload_data=False):
     mins = sig.minhash.get_mins()
 
     if isinstance(node, SigLeaf):
@@ -198,6 +204,9 @@ def search_minhashes_containment(node, sig, threshold,
     if results is not None:
         results[node.name] = float(matches) / len(mins)
 
+    if unload_data:
+        node.unload()
+
     if len(mins) and float(matches) / len(mins) >= threshold:
         return 1
     return 0
@@ -207,7 +216,7 @@ class GatherMinHashesFindBestIgnoreMaxHash(object):
     def __init__(self, initial_best_match=0.0):
         self.best_match = initial_best_match
 
-    def search(self, node, query, threshold, results=None):
+    def search(self, node, query, threshold, results=None, unload_data=False):
         score = 0
         if not len(query.minhash):
             return 0
@@ -234,6 +243,9 @@ class GatherMinHashesFindBestIgnoreMaxHash(object):
         # store results if we have passed in an appropriate dictionary
         if results is not None:
             results[node.name] = score
+
+        if unload_data:
+            node.unload()
 
         if score >= threshold:
             # have we done better than this? if no, truncate searches below.
