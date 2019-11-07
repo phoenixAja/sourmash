@@ -24,6 +24,17 @@ DEFAULT_LINE_COUNT = 1500
 
 
 def compute_add_args(parser):
+
+    def ksize_parser(ksizes):
+        # get list of k-mer sizes for which to compute sketches
+        if ',' in ksizes:
+            ksizes = ksizes.split(',')
+            ksizes = list(map(int, ksizes))
+        else:
+            ksizes = [int(ksizes)]
+
+        return ksizes
+
     parser.add_argument('filenames', nargs='+',
                         help='file(s) of sequences')
 
@@ -34,7 +45,8 @@ def compute_add_args(parser):
     parser.add_argument('--input-is-protein', action='store_true',
                         help='Consume protein sequences - no translation needed.')
     parser.add_argument('-k', '--ksizes',
-                        default=DEFAULT_COMPUTE_K,
+                        default=DEFAULT_COMPUTE_K.split(","),
+                        type=ksize_parser,
                         help='comma-separated list of k-mer sizes (default: %(default)s)')
     parser.add_argument('-n', '--num-hashes', type=int,
                         default=DEFAULT_N,
@@ -139,13 +151,6 @@ def compute(filenames=None, check_sequence=False, ksizes=(21, 31, 51), dna=True,
     if randomize:
         notify('randomizing file list because of --randomize')
         random.shuffle(filenames)
-
-    # get list of k-mer sizes for which to compute sketches
-    if ',' in ksizes:
-        ksizes = ksizes.split(',')
-        ksizes = list(map(int, ksizes))
-    else:
-        ksizes = [int(ksizes)]
 
     notify('Computing signature for ksizes: {}', str(ksizes))
     num_sigs = 0
