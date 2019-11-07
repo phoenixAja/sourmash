@@ -45,7 +45,7 @@ def compute_add_args(parser):
     parser.add_argument('--input-is-protein', action='store_true',
                         help='Consume protein sequences - no translation needed.')
     parser.add_argument('-k', '--ksizes',
-                        default=DEFAULT_COMPUTE_K.split(","),
+                        default=list(map(int, DEFAULT_COMPUTE_K.split(","))),
                         type=ksize_parser,
                         help='comma-separated list of k-mer sizes (default: %(default)s)')
     parser.add_argument('-n', '--num-hashes', type=int,
