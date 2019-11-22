@@ -24,7 +24,7 @@ jobs:
   include:
     - &check
       stage: check # do a pre-screen to make sure this is even worth testing
-      python: 3.7
+      python: 3.8
 
     - &test
       stage: test
@@ -35,7 +35,7 @@ jobs:
       env:
         - TOXENV=py36
     - <<: *test
-      python: 3.7
+      python: 3.8
       name: integration (ipfs/redis)
       before_install:
         - sudo snap install ipfs
@@ -44,6 +44,8 @@ jobs:
       services:
         - redis-server
         - docker
+    - <<: *test
+      python: 3.7
     - <<: *test
       python: 3.6
     - <<: *test
@@ -71,7 +73,7 @@ jobs:
 
     - &wheel
       stage: build wheel and send to github releases
-      python: 3.7
+      python: 3.8
       services:
         - docker
       env:
