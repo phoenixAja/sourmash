@@ -3,8 +3,6 @@
 Save and load MinHash sketches in a JSON format, along with some metadata.
 """
 from __future__ import print_function
-import hashlib
-import weakref
 
 import sys
 import os
@@ -17,10 +15,6 @@ from .utils import RustObject, rustcall, decode_str
 
 
 SIGNATURE_VERSION = 0.4
-
-
-sig_refs = weakref.WeakKeyDictionary()
-mhs_refs = weakref.WeakKeyDictionary()
 
 
 class SourmashSignature(RustObject):
@@ -132,7 +126,7 @@ class SourmashSignature(RustObject):
         return name
 
     def similarity(self, other, ignore_abundance=False, downsample=False):
-        "Compute similarity with the other MinHash signature."
+        "Compute similarity with the other signature."
         try:
             return self.minhash.similarity(other.minhash, ignore_abundance)
         except ValueError as e:
@@ -294,8 +288,6 @@ def load_signatures(
         for i in range(size):
             sig = SourmashSignature._from_objptr(sigs_ptr[i], shared=True)
             sigs.append(sig)
-            sig_refs[sig] = sigs
-        #lib.signature_free(sigs_ptr)
 
         for sig in sigs:
             yield sig
