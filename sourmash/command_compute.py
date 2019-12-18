@@ -1,6 +1,6 @@
 """
 Functions implementing the 'compute' command and related functions.
-npu"""
+"""
 from __future__ import print_function, division, absolute_import
 
 import argparse
