@@ -204,10 +204,13 @@ public:
                 }
             }
         } else {                      // protein
+            
             std::string rc = _revcomp(seq);
+            unsigned int aa_ksize = int(ksize);
+            
             for (unsigned int i = 0; i < 3; i++) {
                 std::string aa = _dna_to_aa(seq.substr(i, seq.length() - i));
-                unsigned int aa_ksize = int(ksize / 3);
+                // unsigned int aa_ksize = int(ksize / 3);
                 std::string kmer;
 
                 for (unsigned int j = 0; j < aa.length() - aa_ksize + 1; j++) {
@@ -216,7 +219,7 @@ public:
                 }
 
                 aa = _dna_to_aa(rc.substr(i, rc.length() - i));
-                aa_ksize = int(ksize / 3);
+           //     aa_ksize = int(ksize / 3);
 
                 for (unsigned int j = 0; j < aa.length() - aa_ksize + 1; j++) {
                     kmer = aa.substr(j, aa_ksize);

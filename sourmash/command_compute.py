@@ -1,6 +1,6 @@
 """
 Functions implementing the 'compute' command and related functions.
-"""
+npu"""
 from __future__ import print_function, division, absolute_import
 
 import argparse
@@ -19,6 +19,7 @@ from .logging import notify, error, set_quiet
 
 from .sourmash_args import DEFAULT_N
 DEFAULT_COMPUTE_K = '21,31,51'
+DEFAULT_COMPUTE_PROT_K = '7,11,17'
 DEFAULT_LINE_COUNT = 1500
 
 
@@ -48,6 +49,9 @@ def compute(args):
     parser.add_argument('-k', '--ksizes',
                         default=DEFAULT_COMPUTE_K,
                         help='comma-separated list of k-mer sizes (default: %(default)s)')
+    parser.add_argument('--protein-ksizes',
+                        default=None, #DEFAULT_COMPUTE_PROT_K
+                        help='comma-separated list of protein k-mer sizes (default: None')
     parser.add_argument('-n', '--num-hashes', type=int,
                         default=DEFAULT_N,
                         help='number of hashes to use in each sketch (default: %(default)i)')
@@ -109,10 +113,13 @@ def compute(args):
         error('error: sourmash only supports CC0-licensed signatures. sorry!')
         sys.exit(-1)
 
+    prot_ksizes = args.protein_ksizes
     if args.input_is_protein and args.dna:
         notify('WARNING: input is protein, turning off nucleotide hashing')
         args.dna = False
         args.protein = True
+        if not prot_ksizes:
+            prot_ksizes = args.ksizes
 
     if args.scaled:
         if args.scaled < 1:
@@ -127,7 +134,7 @@ def compute(args):
         if args.num_hashes != 0:
             notify('setting num_hashes to 0 because --scaled is set')
             args.num_hashes = 0
- 
+
     notify('computing signatures for files: {}', ", ".join(args.filenames))
 
     if args.randomize:
@@ -142,40 +149,55 @@ def compute(args):
     else:
         ksizes = [int(ksizes)]
 
-    notify('Computing signature for ksizes: {}', str(ksizes))
+    if prot_ksizes:
+        if ',' in prot_ksizes:
+            prot_ksizes = prot_ksizes.split(',')
+            prot_ksizes = list(map(int, prot_ksizes))
+        else:
+            prot_ksizes = [int(prot_ksizes)]
+
+
+    if (args.protein or args.dayhoff or args.hp) and not args.input_is_protein:
+        if not prot_ksizes:
+            bad_ksizes = [ str(k) for k in ksizes if k % 3 != 0 ]
+            if bad_ksizes:
+                error('protein ksizes must be divisible by 3, sorry!')
+                error('bad ksizes: {}', ", ".join(bad_ksizes))
+                sys.exit(-1)
+            else:
+                prot_ksizes = [k/3 for k in ksizes]
+                notify('calculated protein ksizes: {}', ", ".join(prot_ksizes))
+
+    notify('any nucleotide signatures will be computed at ksizes: {}', str(ksizes))
+    notify('any protein signatures will be computed at amino acid ksizes: {}', str(prot_ksizes))
     num_sigs = 0
+
     if args.dna and args.protein:
         notify('Computing both nucleotide and protein signatures.')
-        num_sigs = 2*len(ksizes)
+        num_sigs = len(ksizes + prot_ksizes)
     elif args.dna and args.dayhoff:
         notify('Computing both nucleotide and Dayhoff-encoded protein '
                'signatures.')
-        num_sigs = 2*len(ksizes)
+        num_sigs = len(ksizes + prot_ksizes)
     elif args.dna and args.hp:
         notify('Computing both nucleotide and Hp-encoded protein '
                'signatures.')
-        num_sigs = 2*len(ksizes)
+        num_sigs = len(ksizes + prot_ksizes)
     elif args.dna:
         notify('Computing only nucleotide (and not protein) signatures.')
         num_sigs = len(ksizes)
     elif args.protein:
         notify('Computing only protein (and not nucleotide) signatures.')
-        num_sigs = len(ksizes)
+        num_sigs = len(prot_ksizes)
     elif args.dayhoff:
         notify('Computing only Dayhoff-encoded protein (and not nucleotide) '
                'signatures.')
-        num_sigs = len(ksizes)
+        num_sigs = len(prot_ksizes)
     elif args.hp:
         notify('Computing only hp-encoded protein (and not nucleotide) '
                'signatures.')
-        num_sigs = len(ksizes)
+        num_sigs = len(prot_ksizes)
 
-    if (args.protein or args.dayhoff or args.hp) and not args.input_is_protein:
-        bad_ksizes = [ str(k) for k in ksizes if k % 3 != 0 ]
-        if bad_ksizes:
-            error('protein ksizes must be divisible by 3, sorry!')
-            error('bad ksizes: {}', ", ".join(bad_ksizes))
-            sys.exit(-1)
 
     notify('Computing a total of {} signature(s).', num_sigs)
 
@@ -192,7 +214,8 @@ def compute(args):
 
         # one minhash for each ksize
         Elist = []
-        for k in ksizes:
+
+        for k in prot_ksizes:
             if args.protein:
                 E = MinHash(ksize=k, n=args.num_hashes,
                             is_protein=True,
@@ -220,6 +243,8 @@ def compute(args):
                             scaled=args.scaled,
                             seed=seed)
                 Elist.append(E)
+
+        for k in ksizes:
             if args.dna:
                 E = MinHash(ksize=k, n=args.num_hashes,
                             is_protein=False,

@@ -471,7 +471,8 @@ cdef class MinHash(object):
                                "the MinHash to use set_abundances.")
 
     def add_protein(self, sequence):
-        cdef uint32_t ksize = deref(self._this).ksize // 3
+        #cdef uint32_t ksize = deref(self._this).ksize // 3
+        cdef uint32_t ksize = deref(self._this).ksize
         if len(sequence) < ksize:
             return
 
