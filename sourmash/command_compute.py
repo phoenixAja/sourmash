@@ -119,6 +119,7 @@ def compute(args):
         args.dna = False
         args.protein = True
         if not prot_ksizes:
+            # if we don't want to enable this (maintains current functionality), we can set the default protein ksizes in the args
             prot_ksizes = args.ksizes
 
     if args.scaled:
@@ -155,6 +156,8 @@ def compute(args):
             prot_ksizes = list(map(int, prot_ksizes))
         else:
             prot_ksizes = [int(prot_ksizes)]
+    else:
+        prot_ksizes = []
 
 
     if (args.protein or args.dayhoff or args.hp) and not args.input_is_protein:
@@ -165,11 +168,12 @@ def compute(args):
                 error('bad ksizes: {}', ", ".join(bad_ksizes))
                 sys.exit(-1)
             else:
-                prot_ksizes = [k/3 for k in ksizes]
-                notify('calculated protein ksizes: {}', ", ".join(prot_ksizes))
+                prot_ksizes = [int(k/3) for k in ksizes]
+                notify('calculated protein ksizes: {}', ", ".join(map(str, prot_ksizes)))
 
     notify('any nucleotide signatures will be computed at ksizes: {}', str(ksizes))
-    notify('any protein signatures will be computed at amino acid ksizes: {}', str(prot_ksizes))
+    if prot_ksizes:
+        notify('any protein signatures will be computed at amino acid ksizes: {}', str(prot_ksizes))
     num_sigs = 0
 
     if args.dna and args.protein:
