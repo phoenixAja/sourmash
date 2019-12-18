@@ -27,14 +27,18 @@ pub enum HashFunctions {
     murmur64_hp = 4,
 }
 
-impl HashFunctions {
-    pub fn to_string(&self) -> String {
-        match self {
-            Self::murmur64_DNA => "dna".into(),
-            Self::murmur64_protein => "protein".into(),
-            Self::murmur64_dayhoff => "dayhoff".into(),
-            Self::murmur64_hp => "hp".into(),
-        }
+impl std::fmt::Display for HashFunctions {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::murmur64_DNA => "dna",
+                Self::murmur64_protein => "protein",
+                Self::murmur64_dayhoff => "dayhoff",
+                Self::murmur64_hp => "hp",
+            }
+        )
     }
 }
 
@@ -134,13 +138,27 @@ impl<'de> Deserialize<'de> for KmerMinHash {
             _ => unimplemented!(), // TODO: throw error here
         };
 
+        // This shouldn't be necessary, but at some point we
+        // created signatures with unordered mins =(
+        let (mins, abunds) = if let Some(abunds) = tmpsig.abundances {
+            let mut values: Vec<(_, _)> = tmpsig.mins.iter().zip(abunds.iter()).collect();
+            values.sort();
+            let mins = values.iter().map(|(v, _)| **v).collect();
+            let abunds = values.iter().map(|(_, v)| **v).collect();
+            (mins, Some(abunds))
+        } else {
+            let mut values: Vec<_> = tmpsig.mins.into_iter().collect();
+            values.sort();
+            (values, None)
+        };
+
         Ok(KmerMinHash {
             num,
             ksize: tmpsig.ksize,
             seed: tmpsig.seed,
             max_hash: tmpsig.max_hash,
-            mins: tmpsig.mins,
-            abunds: tmpsig.abundances,
+            mins,
+            abunds,
             hash_function,
         })
     }
