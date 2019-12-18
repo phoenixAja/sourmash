@@ -32,6 +32,7 @@ subtract <signature> <other_sig> [...]    - subtract one or more signatures
 import [ ... ]                            - import a mash or other signature
 export <signature>                        - export a signature, e.g. to mash
 overlap <signature1> <signature2>         - see detailed comparison of sigs
+cat <signature> [<signature> ...]         - cat one or more signature files
 
 ** Use '-h' to get subcommand-specific help, e.g.
 
@@ -291,6 +292,64 @@ def merge(args):
     sourmash.save_signatures([merged_sigobj], fp=args.output)
 
     notify('loaded and merged {} signatures', total_loaded)
+
+
+def cat(args):
+    #based off of flatten code
+    """
+    cat one or more signature files.
+    """
+    p = SourmashArgumentParser(prog='sourmash signature cat')
+    p.add_argument('signatures', nargs='+')
+    p.add_argument('-q', '--quiet', action='store_true',
+                   help='suppress non-error output')
+    p.add_argument('-o', '--output', type=argparse.FileType('wt'),
+                   default=sys.stdout,
+                   help='output signature to this file')
+    p.add_argument('--md5', default=None,
+                   help='select signatures whose md5 contains this substring')
+    p.add_argument('--name', default=None,
+                   help='select signatures whose name contains this substring')
+    p.add_argument('--flatten', action='store_true',
+                   help='Remove abundances from all signatures.')
+    sourmash_args.add_ksize_arg(p, DEFAULT_LOAD_K)
+    sourmash_args.add_moltype_args(p)
+    args = p.parse_args(args)
+    set_quiet(args.quiet)
+
+    #not doing any checks for repeated/incompatible sigs.
+    outlist = []
+    total_loaded = 0
+    for filename in args.signatures:
+        siglist = sourmash.load_signatures(filename, ksize=None,
+                                           select_moltype=None,
+                                           do_raise=True)
+        siglist = list(siglist)
+
+        total_loaded += len(siglist)
+
+        # select!
+        if args.md5 is not None:
+            siglist = [ ss for ss in siglist if args.md5 in ss.md5sum() ]
+        if args.name is not None:
+            siglist = [ ss for ss in siglist if args.name in ss.name() ]
+
+        if args.flatten:
+            for ss in siglist:
+                flattened_mh = ss.minhash.copy_and_clear()
+                flattened_mh.track_abundance = False
+                flattened_mh.add_many(ss.minhash.get_mins())
+
+                ss.minhash = flattened_mh
+
+        outlist.extend(siglist)
+
+    sourmash.save_signatures(outlist, fp=args.output)
+
+    notify("loaded {} total that matched ksize & molecule type",
+           total_loaded)
+    notify("extracted {} signatures from {} file(s)", len(outlist),
+           len(args.signatures))
 
 
 def intersect(args):
@@ -805,7 +864,8 @@ def main(sysv_args):
                 'import': sig_import,
                 'export': export,
                 'describe': describe,
-                'overlap': overlap}
+                'overlap': overlap,
+                'cat': cat}
 
     parser = argparse.ArgumentParser(
         description='signature file manipulation utilities', usage=usage)
